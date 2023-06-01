@@ -1,0 +1,1548 @@
+---
+title: "Kidney_A12"
+author: ''
+date: "2023-05-28"
+output: html_document
+---
+
+
+# Introduction
+
+```{r}
+library(GEOquery)
+library(limma)
+library(randomForest)
+library(caret)
+library(shiny)
+library(DESeq2)
+library(edgeR)
+
+# Download datasets
+
+# gse36059 <- getGEO("GSE36059")[[1]]
+# gse25902 <- getGEO("GSE25902")[[1]]
+# gse48581 <- getGEO("GSE48581")[[1]]
+# gse129166 <- getGEO("GSE129166")[[1]]
+# gse34748 <- getGEO("GSE34748")[[1]]
+
+load("gse36059.RData")
+load("gse25902.RData")
+load("gse48581.RData")
+load("gse129166.RData")
+load("gse34748.RData")
+
+```
+
+```{r}
+# Extract gene expression data and sample metadata
+
+
+
+exprs34748 <- exprs(gse34748)
+pheno34748 <- pData(gse34748)
+
+
+
+exprs129166 <- exprs(gse129166)
+pheno129166 <- pData(gse129166)
+
+
+
+exprs48581 <- exprs(gse48581)
+pheno48581 <- pData(gse48581)
+
+exprs25902 <- exprs(gse25902)
+pheno25902 <- pData(gse25902)
+
+
+
+
+
+
+exprs36059 <- exprs(gse36059)
+pheno36059 <- pData(gse36059)
+
+
+```
+
+
+# GSE34748
+
+```{r}
+pheno34748$Outcome <- ifelse(grepl("cg=0", pheno34748$"timepoint:ch1"),"Non_rejection","ABMR")
+
+norm_exprs_34748 <- normalizeQuantiles(exprs(gse34748))
+exprs(gse34748) <- norm_exprs_34748
+gene_symbols_gse34748 <- unlist(lapply(strsplit(fData(gse34748)$"Gene Symbol", " /// ", 1), `[`, 1))
+gene_symbols_df_34748 <- data.frame(GeneSymbol = gene_symbols_gse34748, RowIndex = 1:length(gene_symbols_gse34748))
+unique_gene_symbols_df_34748 <- gene_symbols_df_34748[!duplicated(gene_symbols_df_34748$GeneSymbol), ]
+exprs_gse34748_unique <- exprs(gse34748)[unique_gene_symbols_df_34748$RowIndex, ]
+gene_symbols_gse34748_unique <- unique_gene_symbols_df_34748$GeneSymbol
+rownames(exprs_gse34748_unique) <- gene_symbols_gse34748_unique
+
+```
+
+
+
+
+
+# GSE25902 (test)
+
+```{r}
+library(limma)
+library(sva)
+
+pheno25902$outcome= unlist(lapply(strsplit(pheno25902$characteristics_ch1.2, "score: ", 1), `[`, 2))
+if("0" %in% pheno25902$outcome) {
+  pheno25902$outcome[pheno25902$outcome =="0"]= "Non_rejection"
+}
+if("3" %in% pheno25902$outcome) {
+   pheno25902$outcome[pheno25902$outcome =="3"] = "TCMR"
+  } 
+if("1" %in% pheno25902$outcome) {
+    pheno25902$outcome[pheno25902$outcome =="1"] = "Other"
+} 
+if("2" %in% pheno25902$outcome) {
+    pheno25902$outcome[pheno25902$outcome =="2"] = "Other"
+  } 
+
+
+norm_exprs_25902 <- normalizeQuantiles(exprs(gse25902))
+exprs(gse25902) <- norm_exprs_25902
+
+
+
+gene_symbols_gse25902 <- unlist(lapply(strsplit(fData(gse25902)$"Gene Symbol", " /// ", 1), `[`, 1))
+
+# Remove duplicates and keep only the first occurrence of each gene symbol for gse25902
+gene_symbols_df_25902 <- data.frame(GeneSymbol = gene_symbols_gse25902, RowIndex = 1:length(gene_symbols_gse25902))
+unique_gene_symbols_df_25902 <- gene_symbols_df_25902[!duplicated(gene_symbols_df_25902$GeneSymbol), ]
+exprs_gse25902_unique <- exprs(gse25902)[unique_gene_symbols_df_25902$RowIndex, ]
+gene_symbols_gse25902_unique <- unique_gene_symbols_df_25902$GeneSymbol
+
+# Set the row names for the unique dataset
+rownames(exprs_gse25902_unique) <- gene_symbols_gse25902_unique
+
+
+
+```
+
+
+# GSE129166
+
+```{r}
+pheno129166$outcome <- ifelse(
+  grepl("tcmr \\(no: 0_borderline:1_TCMR:2\\): 0", pheno129166$characteristics_ch1.1) & grepl("abmr \\(no: 0_Yes:1\\): 0", pheno129166$characteristics_ch1.2), "Non_rejection",
+  ifelse(
+    grepl("tcmr \\(no: 0_borderline:1_TCMR:2\\): 0", pheno129166$characteristics_ch1.1) & grepl("abmr \\(no: 0_Yes:1\\): 1", pheno129166$characteristics_ch1.2), "ABMR",
+    ifelse(
+      grepl("tcmr \\(no: 0_borderline:1_TCMR:2\\): 2", pheno129166$characteristics_ch1.1) & grepl("abmr \\(no: 0_Yes:1\\): 0", pheno129166$characteristics_ch1.2), "TCMR", "Other"
+    )
+  )
+)
+
+# Create a mask to exclude samples with "Blood" in the title
+no_blood_mask <- !grepl("Blood", pheno129166$title)
+
+# Update the masks to exclude samples with "Blood" in the title
+ABMR_mask_129166 <- pheno129166$outcome == "ABMR" & no_blood_mask
+TCMR_mask_129166 <- pheno129166$outcome == "TCMR" & no_blood_mask
+NR_mask_129166 <- pheno129166$outcome == "Non_rejection" & no_blood_mask
+
+ABMR_NR_mask_129166 <- ABMR_mask_129166 | NR_mask_129166
+TCMR_NR_mask_129166 <- TCMR_mask_129166 | NR_mask_129166
+
+# Subset the dataset using the masks
+ABMR_NR_dataset_129166 <- gse129166[, ABMR_NR_mask_129166]
+TCMR_NR_dataset_129166 <- gse129166[, TCMR_NR_mask_129166]
+
+
+pheno_ABMR_NR_dataset_129166 <- pData(ABMR_NR_dataset_129166)
+pheno_TCMR_NR_dataset_129166 <- pData(TCMR_NR_dataset_129166)
+
+# Update the pData of the subsetted datasets
+pheno_ABMR_NR_dataset_129166$outcome <- pheno129166$outcome[ABMR_NR_mask_129166]
+pheno_TCMR_NR_dataset_129166$outcome <- pheno129166$outcome[TCMR_NR_mask_129166]
+
+```
+
+
+# GSE48581
+
+```{r}
+pheno48581$outcome <- ifelse(
+  grepl("diagnosis \\(tcmr,non-tcmr, nephrectomies\\): TCMR", pheno48581$characteristics_ch1.1), "TCMR",
+  ifelse(
+    grepl("diagnosis \\(tcmr,non-tcmr, nephrectomies\\): non-TCMR", pheno48581$characteristics_ch1.1) & grepl("histologic diagnosis \\(abmr, tcmr, bdl, mixed, others\\): ABMR", pheno48581$characteristics_ch1.2), "ABMR",
+    ifelse(
+      grepl("diagnosis \\(tcmr,non-tcmr, nephrectomies\\): non-TCMR", pheno48581$characteristics_ch1.1) & grepl("histologic diagnosis \\(abmr, tcmr, bdl, mixed, others\\): Others", pheno48581$characteristics_ch1.2), "Non-rejection", "others"
+    )
+  )
+)
+
+ABMR_mask_48581 <- pheno48581$outcome == "ABMR"
+TCMR_mask_48581 <- pheno48581$outcome == "TCMR"
+NR_mask_48581 <- pheno48581$outcome == "Non_rejection"
+
+ABMR_NR_mask_48581 <- ABMR_mask_48581 | NR_mask_48581
+TCMR_NR_mask_48581 <- TCMR_mask_48581 | NR_mask_48581
+
+# Add 'outcome' column back to the pData of the subsetted datasets
+pheno_ABMR_NR_dataset_48581 <- pData(gse48581[, ABMR_NR_mask_48581])
+pheno_TCMR_NR_dataset_48581 <- pData(gse48581[, TCMR_NR_mask_48581])
+
+# Subset the dataset using the masks
+ABMR_NR_dataset_48581 <- gse48581[, ABMR_NR_mask_48581]
+TCMR_NR_dataset_48581 <- gse48581[, TCMR_NR_mask_48581]
+
+# Update the pData of the subsetted datasets
+pheno_ABMR_NR_dataset_48581$outcome <- pheno48581$outcome[ABMR_NR_mask_48581]
+pheno_TCMR_NR_dataset_48581$outcome <- pheno48581$outcome[TCMR_NR_mask_48581]
+
+```
+
+
+# GSE36059
+
+```{r}
+ABMR_mask_36059 <- ABMR_mask_36059 <- grepl("ABMR", pheno36059$"diagnosis (tcmr,abmr,mixed,non-rejecting):ch1")
+TCMR_mask_36059 <-  grepl("TCMR", pheno36059$"diagnosis (tcmr,abmr,mixed,non-rejecting):ch1")
+NR_mask_36059 <-  grepl("non-rejecting", pheno36059$"diagnosis (tcmr,abmr,mixed,non-rejecting):ch1")
+
+ABMR_NR_mask_36059 <- ABMR_mask_36059 | NR_mask_36059
+TCMR_NR_mask_36059 <- TCMR_mask_36059 | NR_mask_36059
+
+# Add 'outcome' column back to the pData of the subsetted datasets
+pheno_ABMR_NR_dataset_36059 <- pData(gse36059[, ABMR_NR_mask_36059])
+pheno_TCMR_NR_dataset_36059 <- pData(gse36059[, TCMR_NR_mask_36059])
+
+# Subset the dataset using the masks
+ABMR_NR_dataset_36059 <- gse36059[, ABMR_NR_mask_36059]
+TCMR_NR_dataset_36059 <- gse36059[, TCMR_NR_mask_36059]
+
+# Update the pData of the subsetted datasets
+pheno_ABMR_NR_dataset_36059$outcome <- pheno36059$"diagnosis (tcmr,abmr,mixed,non-rejecting):ch1"[ABMR_NR_mask_36059]
+pheno_TCMR_NR_dataset_36059$outcome <- pheno36059$"diagnosis (tcmr,abmr,mixed,non-rejecting):ch1"[TCMR_NR_mask_36059]
+
+pheno_ABMR_NR_dataset_36059$outcome <- ifelse(pheno_ABMR_NR_dataset_36059$outcome == "non-rejecting", "Non_rejection", pheno_ABMR_NR_dataset_36059$outcome)
+
+pheno_TCMR_NR_dataset_36059$outcome <- ifelse(pheno_TCMR_NR_dataset_36059$outcome == "non-rejecting", "Non_rejection", pheno_TCMR_NR_dataset_36059$outcome)
+
+```
+
+
+
+
+# ABMR
+
+
+```{r}
+library(limma)
+# Normalize the expression data in each dataset
+norm_exprs_36059 <- normalizeQuantiles(exprs(ABMR_NR_dataset_36059))
+norm_exprs_48581 <- normalizeQuantiles(exprs(ABMR_NR_dataset_48581))
+norm_exprs_129166 <- normalizeQuantiles(exprs(ABMR_NR_dataset_129166))
+
+# Replace the original expression data with the normalized data
+exprs(ABMR_NR_dataset_36059) <- norm_exprs_36059
+exprs(ABMR_NR_dataset_48581) <- norm_exprs_48581
+exprs(ABMR_NR_dataset_129166) <- norm_exprs_129166
+
+# Load the necessary package
+library(sva)
+
+# Extract gene symbols from all datasets
+gene_symbols_gse36059 <- unlist(lapply(strsplit(fData(gse36059)$"Gene Symbol", " /// ", 1), `[`, 1))
+gene_symbols_gse48581 <- unlist(lapply(strsplit(fData(gse48581)$"Gene Symbol", " /// ", 1), `[`, 1))
+gene_symbols_gse129166 <- unlist(lapply(strsplit(fData(gse129166)$"Gene Symbol", " /// ", 1), `[`, 1))
+
+# Remove duplicates and keep only the first occurrence of each gene symbol for gse36059
+gene_symbols_df_36059 <- data.frame(GeneSymbol = gene_symbols_gse36059, RowIndex = 1:length(gene_symbols_gse36059))
+unique_gene_symbols_df_36059 <- gene_symbols_df_36059[!duplicated(gene_symbols_df_36059$GeneSymbol), ]
+exprs_gse36059_unique <- exprs(gse36059)[unique_gene_symbols_df_36059$RowIndex, ]
+gene_symbols_gse36059_unique <- unique_gene_symbols_df_36059$GeneSymbol
+
+# Remove duplicates and keep only the first occurrence of each gene symbol for gse48581
+gene_symbols_df_48581 <- data.frame(GeneSymbol = gene_symbols_gse48581, RowIndex = 1:length(gene_symbols_gse48581))
+unique_gene_symbols_df_48581 <- gene_symbols_df_48581[!duplicated(gene_symbols_df_48581$GeneSymbol), ]
+exprs_gse48581_unique <- exprs(gse48581)[unique_gene_symbols_df_48581$RowIndex, ]
+gene_symbols_gse48581_unique <- unique_gene_symbols_df_48581$GeneSymbol
+
+# Remove duplicates and keep only the first occurrence of each gene symbol for gse129166
+gene_symbols_df_129166 <- data.frame(GeneSymbol = gene_symbols_gse129166, RowIndex = 1:length(gene_symbols_gse129166))
+unique_gene_symbols_df_129166 <- gene_symbols_df_129166[!duplicated(gene_symbols_df_129166$GeneSymbol), ]
+exprs_gse129166_unique <- exprs(gse129166)[unique_gene_symbols_df_129166$RowIndex, ]
+gene_symbols_gse129166_unique <- unique_gene_symbols_df_129166$GeneSymbol
+
+# Find common gene symbols
+common_gene_symbols <- Reduce(intersect, list(gene_symbols_gse36059_unique, gene_symbols_gse48581_unique, gene_symbols_gse129166_unique))
+
+# Set the row names for each unique dataset
+rownames(exprs_gse36059_unique) <- gene_symbols_gse36059_unique
+rownames(exprs_gse48581_unique) <- gene_symbols_gse48581_unique
+rownames(exprs_gse129166_unique) <- gene_symbols_gse129166_unique
+
+# Filter expression matrices by common gene symbols and ABMR samples
+exprs_filtered_36059_ABMR <- exprs_gse36059_unique[rownames(exprs_gse36059_unique) %in% common_gene_symbols, colnames(exprs_gse36059_unique) %in% colnames(ABMR_NR_dataset_36059)]
+exprs_filtered_48581_ABMR <- exprs_gse48581_unique[rownames(exprs_gse48581_unique) %in% common_gene_symbols, colnames(exprs_gse48581_unique) %in% colnames(ABMR_NR_dataset_48581)]
+exprs_filtered_129166_ABMR <- exprs_gse129166_unique[rownames(exprs_gse129166_unique) %in% common_gene_symbols, colnames(exprs_gse129166_unique) %in% colnames(ABMR_NR_dataset_129166)]
+
+# Combine the datasets using cbind
+combined_data <- cbind(exprs_filtered_36059_ABMR, exprs_filtered_48581_ABMR, exprs_filtered_129166_ABMR)
+
+# Create the batch variable
+batch_ABMR <- c(rep(1, ncol(exprs_filtered_36059_ABMR)), rep(2, ncol(exprs_filtered_48581_ABMR)), rep(3, ncol(exprs_filtered_129166_ABMR)))
+
+# Perform batch correction using ComBat
+corrected_data <- ComBat(dat=combined_data, batch=batch_ABMR, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+
+
+
+
+
+
+boxplot(norm_exprs_36059, main="After normalization - 36059")
+boxplot(norm_exprs_48581, main="After normalization - 48581")
+boxplot(norm_exprs_129166, main="After normalization - 129166")
+
+
+
+```
+
+
+
+
+
+## Batch Correction
+
+
+
+```{r}
+library(limma)
+library(e1071)
+library(caret)
+
+# Define column names and outcomes for each dataset
+gsm_ids_36059 <- colnames(exprs_filtered_36059_ABMR)
+gsm_ids_48581 <- colnames(exprs_filtered_48581_ABMR)
+gsm_ids_129166 <- colnames(exprs_filtered_129166_ABMR)
+
+# Create outcomes data.frames
+outcomes_36059 <- data.frame(GSM_ID = pheno_ABMR_NR_dataset_36059$geo_accession, Outcome = pheno_ABMR_NR_dataset_36059$outcome)
+outcomes_48581 <- data.frame(GSM_ID = pheno_ABMR_NR_dataset_48581$geo_accession, Outcome = pheno_ABMR_NR_dataset_48581$outcome)
+outcomes_129166 <- data.frame(GSM_ID = pheno_ABMR_NR_dataset_129166$geo_accession, Outcome = pheno_ABMR_NR_dataset_129166$outcome)
+
+# Subset the outcomes data.frames based on the filtered expression data column names
+outcomes_36059_filtered <- outcomes_36059[outcomes_36059$GSM_ID %in% gsm_ids_36059, ]
+outcomes_48581_filtered <- outcomes_48581[outcomes_48581$GSM_ID %in% gsm_ids_48581, ]
+outcomes_129166_filtered <- outcomes_129166[outcomes_129166$GSM_ID %in% gsm_ids_129166, ]
+
+
+# Combine outcomes from all datasets
+combined_outcomes <- rbind(outcomes_36059, outcomes_48581, outcomes_129166)
+
+# Extract GSM IDs from corrected_data
+gsm_ids_corrected <- colnames(corrected_data)
+
+# Filter the combined_outcomes data.frame according to the GSM IDs from corrected_data
+ordered_outcomes <- combined_outcomes[match(gsm_ids_corrected, combined_outcomes$GSM_ID), ]
+
+# Remove samples with NA outcomes
+ordered_outcomes_clean <- ordered_outcomes[!is.na(ordered_outcomes$Outcome), ]
+
+# Update the corrected_data object to remove samples with NA outcomes
+corrected_data_clean <- corrected_data[, colnames(corrected_data) %in% ordered_outcomes_clean$GSM_ID]
+
+
+
+
+
+
+
+# 
+# # Check if there are any missing row names
+# missing_row_names <- is.na(rownames(corrected_data_clean))
+# 
+# # If there are any missing row names, assign new ones
+# if (any(missing_row_names)) {
+#   rownames(corrected_data_clean)[missing_row_names] <- paste0("Missing_", which(missing_row_names))
+# }
+# 
+# # Now create the new data frame and save it to a CSV file
+# new_df <- data.frame(RowNames = rownames(corrected_data_clean), ColumnData = corrected_data_clean[, 8])
+# write.csv(new_df, file = "corrected_data_clean_column8_nonjej.csv", row.names = FALSE)
+# 
+# 
+
+
+
+
+
+
+# Create a binary factor for the Outcome variable
+group <- factor(ordered_outcomes_clean$Outcome)
+
+# Create a design matrix
+design <- model.matrix(~0 + group)
+
+# Set column names for the design matrix
+colnames(design) <- levels(group)
+
+# Fit the linear model
+fit_corrected <- lmFit(corrected_data_clean, design)
+
+contrasts_abmr <- makeContrasts("ABMR - Non_rejection" = ABMR - `Non_rejection`, levels = design)
+
+# Compute the contrasts
+fit2 <- contrasts.fit(fit_corrected, contrasts_abmr)
+
+# Compute empirical Bayes statistics
+fit2 <- eBayes(fit2)
+
+# Perform the topTable analysis (change the number of top genes if necessary)
+top_genes <- topTable(fit2, coef = "ABMR - Non_rejection", number = 5000)
+
+selected_column = c()
+
+
+# Order the data frame by the top genes
+# ordered_gene_data <- corrected_data_clean[match(rownames(top_genes), rownames(corrected_data_clean)),]
+
+```
+
+```{r}
+# Load the necessary libraries
+library(ggplot2)
+
+# Create a function to convert the expression matrix into a long-format data frame
+expression_matrix_to_long_df <- function(expr_mat, batch) {
+  df <- as.data.frame(t(expr_mat))
+  df$Batch <- factor(batch)
+  long_df <- reshape2::melt(df, id.vars = "Batch")
+  return(long_df)
+}
+
+# Convert expression matrices to long-format data frames
+combined_data_long <- expression_matrix_to_long_df(combined_data, batch_ABMR)
+corrected_data_long <- expression_matrix_to_long_df(corrected_data, batch_ABMR)
+
+# Create boxplots
+p1 <- ggplot(combined_data_long, aes(x = Batch, y = value)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(title = "Before Batch Correction", x = "Batch", y = "Expression Value")
+
+p2 <- ggplot(corrected_data_long, aes(x = Batch, y = value)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(title = "After Batch Correction", x = "Batch", y = "Expression Value")
+
+# Display the boxplots side by side
+library(gridExtra)
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+
+
+```{r}
+library(ggplot2)
+pc_before_correction <- prcomp(t(combined_data))
+df_pc_before <- as.data.frame(pc_before_correction$x)
+df_pc_before$batch <- batch_ABMR
+
+ggplot(df_pc_before, aes(PC1, PC2, color=as.factor(batch))) +
+  geom_point() +
+  labs(title = "PCA before batch correction", color = "Batch")
+
+pc_after_correction <- prcomp(t(corrected_data))
+df_pc_after <- as.data.frame(pc_after_correction$x)
+df_pc_after$batch <- batch_ABMR
+
+ggplot(df_pc_after, aes(PC1, PC2, color=as.factor(batch))) +
+  geom_point() +
+  labs(title = "PCA after batch correction", color = "Batch")
+
+```
+
+
+
+
+
+
+```{r}
+library(caret)
+library(e1071)
+library(randomForest)
+library(class)
+library(cvTools)
+
+# Select the top 300 genes
+top_300_genes <- head(top_genes, 300)
+top_1000_genes <- head(top_genes, 1000)
+top_2000_genes <- head(top_genes, 2000)
+top_3000_genes <- head(top_genes, 3000)
+
+# Subset the data based on the top 300 genes
+corrected_data_clean_subset <- corrected_data_clean[rownames(corrected_data_clean) %in% rownames(top_3000_genes), ]
+
+# Transpose and create a data frame
+corrected_data_df_clean_subset <- as.data.frame(t(corrected_data_clean_subset))
+corrected_data_df_clean_subset$Outcome <- ordered_outcomes_clean$Outcome
+
+# Prepare the data
+X <- as.matrix(corrected_data_df_clean_subset[, -ncol(corrected_data_df_clean_subset)])
+y <- as.factor(ordered_outcomes_clean$Outcome)
+
+# Cross-validation parameters
+cvK <- 5  # number of CV folds
+n_sim <- 50  # number of repeats
+
+# Initialize the accuracy vectors
+cv_50acc5_svm <- c()
+cv_50acc5_knn <- c()
+cv_50acc5_rf <- c()
+
+for (i in 1:n_sim) {
+  cvSets <- cvTools::cvFolds(nrow(X), cvK)
+  cv_acc_svm <- c()
+  cv_acc_knn <- c()
+  cv_acc_rf <- c()
+
+  for (j in 1:cvK) {
+    test_id <- cvSets$subsets[cvSets$which == j]
+    X_test <- X[test_id, ]
+    X_train <- X[-test_id, ]
+    y_test <- y[test_id]
+    y_train <- y[-test_id]
+
+    # SVM
+    svm_res <- e1071::svm(x = X_train, y = as.factor(y_train))
+    svm_pred <- predict(svm_res, X_test)
+    cv_acc_svm[j] <- mean(svm_pred == y_test)
+
+    # k-NN
+    k <- 5
+    knn_pred <- knn(train = X_train, test = X_test, cl = y_train, k = k)
+    cv_acc_knn[j] <- mean(knn_pred == y_test)
+
+    # # Random Forest
+    ntree <- 500
+    mtry <- sqrt(ncol(X_train))
+    rf_res <- randomForest(x = X_train, y = y_train, ntree = ntree, mtry = mtry)
+    rf_pred <- predict(rf_res, X_test)
+    cv_acc_rf[j] <- mean(rf_pred == y_test)
+  }
+
+  cv_50acc5_svm <- append(cv_50acc5_svm, mean(cv_acc_svm))
+  cv_50acc5_knn <- append(cv_50acc5_knn, mean(cv_acc_knn))
+  cv_50acc5_rf <- append(cv_50acc5_rf, mean(cv_acc_rf))
+}
+
+# Calculate the mean accuracy and standard error of the mean
+svm_mean_acc <- mean(cv_50acc5_svm)
+knn_mean_acc <- mean(cv_50acc5_knn)
+rf_mean_acc <- mean(cv_50acc5_rf)
+
+svm_se <- sd(cv_50acc5_svm) / sqrt(length(cv_50acc5_svm))
+knn_se <- sd(cv_50acc5_knn) / sqrt(length(cv_50acc5_knn))
+rf_se <- sd(cv_50acc5_rf) / sqrt(length(cv_50acc5_rf))
+
+# Print the results
+cat("SVM mean accuracy: ", svm_mean_acc, "\n")
+cat("SVM standard error of the mean: ", svm_se, "\n")
+
+cat("KNN mean accuracy: ", knn_mean_acc, "\n")
+cat("KNN standard error of the mean: ", knn_se, "\n")
+
+cat("RF mean accuracy: ", rf_mean_acc, "\n")
+cat("RF standard error of the mean: ", rf_se, "\n")
+
+save(cv_50acc5_svm,file = "cv_50acc5_svm")
+save(cv_50acc5_knn,file = "cv_50acc5_knn")
+save(cv_50acc5_rf,file = "cv_50acc5_rf")
+#
+# final_svm_model_3000 <- e1071::svm(X, as.factor(y))
+# save(final_svm_model_3000,file = "ABMR_SVM_model_3000.RData")
+# 
+# final_knn_model_3000 <- knn.cv(train = X_tcmr, cl = y_tcmr, k = 5)
+# save(final_knn_model_3000, file = "ABMR_KNN_model_3000.RData")
+
+final_rf_model_3000 <- randomForest(x = X, y = y, ntree = ntree, mtry = mtry)
+# save(final_rf_model_3000, file = "ABMR_RF_model_3000.RData")
+```
+
+
+
+
+```{r}
+library(caret)
+library(e1071)
+library(randomForest)
+library(class)
+library(cvTools)
+
+# Select the top 1000 genes
+top_3000_genes <- head(top_genes, 3000)
+
+# Subset the data based on the top 1000 genes
+corrected_data_clean_subset <- corrected_data_clean[rownames(corrected_data_clean) %in% rownames(top_3000_genes), ]
+
+# Transpose and create a data frame
+corrected_data_df_clean_subset <- as.data.frame(t(corrected_data_clean_subset))
+corrected_data_df_clean_subset$Outcome <- ordered_outcomes_clean$Outcome
+
+# Prepare the data
+X <- as.matrix(corrected_data_df_clean_subset[, -ncol(corrected_data_df_clean_subset)])
+y <- as.factor(ordered_outcomes_clean$Outcome)
+
+# Cross-validation parameters
+cvK <- 5  # number of CV folds
+n_sim <- 50  # number of repeats
+
+# Initialize the prediction vectors
+svm_pred_all <- c()
+knn_pred_all <- c()
+rf_pred_all <- c()
+y_test_all <- c()
+
+for (i in 1:n_sim) {
+  cvSets <- cvTools::cvFolds(nrow(X), cvK)
+
+  for (j in 1:cvK) {
+    test_id <- cvSets$subsets[cvSets$which == j]
+    X_test <- X[test_id, ]
+    X_train <- X[-test_id, ]
+    y_test <- y[test_id]
+    y_train <- y[-test_id]
+
+    # SVM
+    svm_res <- e1071::svm(x = X_train, y = as.factor(y_train))
+    svm_pred <- predict(svm_res, X_test)
+    svm_pred_all <- c(svm_pred_all, svm_pred)
+
+    # k-NN
+    k <- 5
+    knn_pred <- knn(train = X_train, test = X_test, cl = y_train, k = k)
+    knn_pred_all <- c(knn_pred_all, knn_pred)
+
+    # Random Forest
+    ntree <- 500
+    mtry <- sqrt(ncol(X_train))
+    rf_res <- randomForest(x = X_train, y = y_train, ntree = ntree, mtry = mtry)
+    rf_pred <- predict(rf_res, X_test)
+    rf_pred_all <- c(rf_pred_all, rf_pred)
+
+    # Save the actual test labels
+    y_test_all <- c(y_test_all, y_test)
+  }
+}
+
+# After the cross-validation loop, calculate the confusion matrix
+svm_cm_abmr <- confusionMatrix(table(Predicted = svm_pred_all, Reference = y_test_all))
+knn_cm_abmr <- confusionMatrix(table(Predicted = knn_pred_all, Reference = y_test_all))
+rf_cm_abmr <- confusionMatrix(table(Predicted = rf_pred_all, Reference = y_test_all))
+
+# save(svm_cm_abmr,file = "svm_cm_abmr.RData")
+# save(knn_cm_abmr,file = "knn_cm_abmr.RData")
+# save(rf_cm_abmr,file = "rf_cm_abmr.RData")
+
+print(svm_cm_abmr)
+print(knn_cm_abmr)
+print(rf_cm_abmr)
+
+```
+
+
+
+
+
+
+
+```{r}
+load("svm_cm_abmr.RData")
+load("knn_cm_abmr.RData")
+load("rf_cm_abmr.RData")
+
+# Extract metrics
+stats_svm_abmr <- c(svm_cm_abmr$byClass["Sensitivity"], svm_cm_abmr$byClass["Specificity"], svm_cm_abmr$byClass["Pos Pred Value"], svm_cm_abmr$byClass["Neg Pred Value"], svm_cm_abmr$overall["Accuracy"])
+stats_knn_abmr <- c(knn_cm_abmr$byClass["Sensitivity"], knn_cm_abmr$byClass["Specificity"], knn_cm_abmr$byClass["Pos Pred Value"], knn_cm_abmr$byClass["Neg Pred Value"], knn_cm_abmr$overall["Accuracy"])
+stats_rf_abmr <- c(rf_cm_abmr$byClass["Sensitivity"], rf_cm_abmr$byClass["Specificity"], rf_cm_abmr$byClass["Pos Pred Value"], rf_cm_abmr$byClass["Neg Pred Value"], rf_cm_abmr$overall["Accuracy"])
+
+# Combine metrics into a data frame
+stats_df_abmr <- data.frame(
+  RF = stats_rf_abmr,
+  SVM = stats_svm_abmr,
+  KNN = stats_knn_abmr,
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+# Print the table using knitr::kable
+knitr::kable(stats_df_abmr)
+
+```
+
+
+
+
+
+
+
+```{r}
+# Combine the accuracies into a single data frame
+accuracy_data <- data.frame(
+  SVM = cv_50acc5_svm,
+  kNN = cv_50acc5_knn,
+  RF = cv_50acc5_rf
+)
+
+# Create the boxplot
+boxplot(accuracy_data, main = "Classifier Accuracies Comparison",
+        xlab = "Classifier", ylab = "Accuracy",
+        col = c("lightblue", "lightgreen", "lightcoral"))
+
+
+```
+
+```{r}
+# load("cv_50acc5_rf.RData")
+# load("cv_50acc5_svm.RData")
+# load("cv_50acc5_knn.RData")
+
+
+# Combine the accuracies into a single data frame
+accuracy_data <- data.frame(
+  SVM = cv_50acc5_svm,
+  kNN = cv_50acc5_knn,
+  RF = cv_50acc5_rf
+)
+
+# Create the boxplot
+boxplot(accuracy_data, main = "Classifier Accuracies Comparison",
+        xlab = "Classifier", ylab = "Accuracy",
+        col = c("lightblue", "lightgreen", "lightcoral"))
+```
+
+
+
+# Confusion matrix for ABMR
+
+```{r}
+# Load the necessary libraries
+library(e1071)
+library(randomForest)
+library(caret)
+
+load("ABMR_RF_model_3000.RData")
+
+
+# Get the variable names from the loaded model
+var_names <- rownames(varImp(final_rf_model_3000))
+
+# Ensure the new data has the same genes as the genes used for model training
+common_genes <- intersect(rownames(exprs_gse34748_unique), var_names)
+new_data_subset <- exprs_gse34748_unique[common_genes, ]
+
+# Make sure the new data is in the same order as the variable names in the model
+new_data_ordered <- new_data_subset[var_names, ]
+
+
+# Transpose the new data
+new_data_t <- t(new_data_ordered)
+
+# Make sure to set the probability argument to TRUE
+class_probabilities <- predict(final_rf_model_3000, new_data_t)
+
+
+# Convert class_probabilities and pheno25902$outcome into factors with the same levels
+class_probabilities_factor <- factor(class_probabilities, levels = c( "ABMR","Non_rejection"))
+pheno34748_outcome_factor <- factor(pheno34748$Outcome, levels = c("ABMR","Non_rejection"))
+
+
+library(pROC)
+class_probabilities_cont <- predict(final_rf_model_3000, new_data_t, type = "prob")
+plot(pROC::roc(pheno34748_outcome_factor, class_probabilities_cont[,1]))
+
+
+
+
+
+
+# Load necessary library
+library(ggplot2)
+
+# Calculate the ROC curve
+roc_obj <- pROC::roc(pheno34748_outcome_factor, class_probabilities_cont[,1])
+
+# Calculate AUC
+auc_value <- pROC::auc(roc_obj)
+print(paste("AUC: ", auc_value))
+
+# Plot ROC curve with ggroc() and annotate with AUC
+roc_plot <- ggroc(roc_obj)
+
+# Add AUC to the ROC curve plot
+roc_plot + 
+  geom_label(
+    aes(x = .8, y = .2, label = paste("AUC =", round(auc_value, digits = 3))),
+    hjust = 1,
+    vjust = 0
+  )
+
+
+
+
+
+
+
+# Generate the confusion matrix
+confusion_matrix <- confusionMatrix(class_probabilities_factor, pheno34748_outcome_factor)
+print(confusion_matrix)
+
+# Print sensitivity (also known as recall or true positive rate)
+sensitivity <- confusion_matrix$byClass["Sensitivity"]
+cat("Sensitivity:", sensitivity, "\n")
+
+# Print specificity (true negative rate)
+specificity <- confusion_matrix$byClass["Specificity"]
+cat("Specificity:", specificity, "\n")
+
+# Print positive predictive value (precision)
+ppv <- confusion_matrix$byClass["Pos Pred Value"]
+cat("Positive Predictive Value (PPV):", ppv, "\n")
+
+# Print negative predictive value
+npv <- confusion_matrix$byClass["Neg Pred Value"]
+cat("Negative Predictive Value (NPV):", npv, "\n")
+
+# Print accuracy
+accuracy <- confusion_matrix$overall["Accuracy"]
+cat("Accuracy:", accuracy, "\n")
+
+
+
+
+
+# Extract the statistics you're interested in
+sensitivity <- confusion_matrix$byClass["Sensitivity"]
+specificity <- confusion_matrix$byClass["Specificity"]
+ppv <- confusion_matrix$byClass["Pos Pred Value"]
+npv <- confusion_matrix$byClass["Neg Pred Value"]
+accuracy <- confusion_matrix$overall["Accuracy"]
+
+
+stats_df <- data.frame(
+  ABMR = c(sensitivity, specificity, ppv, npv, accuracy),
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+library(knitr)
+knitr::kable(stats_df)
+```
+
+
+```{r,message=FALSE}
+library(e1071)
+library(caret)
+library(pROC)
+library(ggplot2)
+library(knitr)
+
+# Load the necessary models
+load("ABMR_RF_model_3000.RData")
+load("ABMR_svm_model_3000.RData")
+load("ABMR_knn_model_3000.RData")
+
+# Get the variable names from the loaded RF model
+var_names <- rownames(varImp(final_rf_model_3000))
+
+# Ensure the new data has the same genes as the genes used for model training
+common_genes <- intersect(rownames(exprs_gse34748_unique), var_names)
+new_data_subset <- exprs_gse34748_unique[common_genes, ]
+
+# Make sure the new data is in the same order as the variable names in the model
+new_data_ordered <- new_data_subset[var_names, ]
+
+# Transpose the new data
+new_data_t <- t(new_data_ordered)
+
+# Predict class probabilities with RF
+class_probabilities_rf <- predict(final_rf_model_3000, new_data_t)
+
+# Convert RF class probabilities and pheno25902$outcome into factors with the same levels
+class_probabilities_rf_factor <- factor(class_probabilities_rf, levels = c("ABMR", "Non_rejection"))
+
+# Predict class probabilities with SVM
+class_probabilities_svm <- predict(final_svm_model_3000, new_data_t)
+
+# Convert SVM class probabilities into factors with the same levels
+class_probabilities_svm_factor <- factor(class_probabilities_svm, levels = c("ABMR", "Non_rejection"))
+
+# Predict class probabilities with KNN
+k <- 5
+class_probabilities_knn <- class::knn(train = X, test = new_data_t, cl = y, k = k)
+
+# Convert KNN class probabilities into factors with the same levels
+class_probabilities_knn_factor <- factor(class_probabilities_knn, levels = c("ABMR", "Non_rejection"))
+
+# pheno34748 outcome factor
+pheno34748_outcome_factor <- factor(pheno34748$Outcome, levels = c("ABMR", "Non_rejection"))
+
+# Generate the confusion matrix for RF, SVM, and KNN
+confusion_matrix_rf <- confusionMatrix(class_probabilities_rf_factor, pheno34748_outcome_factor)
+confusion_matrix_svm <- confusionMatrix(class_probabilities_svm_factor, pheno34748_outcome_factor)
+confusion_matrix_knn <- confusionMatrix(class_probabilities_knn_factor, pheno34748_outcome_factor)
+
+
+
+# Function to extract metrics
+extract_metrics <- function(confusion_matrix) {
+  c(
+    "Sensitivity" = confusion_matrix$byClass["Sensitivity"],
+    "Specificity" = confusion_matrix$byClass["Specificity"],
+    "PPV" = confusion_matrix$byClass["Pos Pred Value"],
+    "NPV" = confusion_matrix$byClass["Neg Pred Value"],
+    "Accuracy" = confusion_matrix$overall["Accuracy"]
+  )
+}
+
+# Extract metrics for RF, SVM, and KNN
+stats_rf <- extract_metrics(confusion_matrix_rf)
+stats_svm <- extract_metrics(confusion_matrix_svm)
+stats_knn <- extract_metrics(confusion_matrix_knn)
+
+# Combine metrics into a data frame
+stats_df_tcmr <- data.frame(
+  RF = stats_rf,
+  SVM = stats_svm,
+  KNN = stats_knn,
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+knitr::kable(stats_df_tcmr)
+
+```
+
+
+
+
+# TCMR
+
+## Batch correction
+
+
+```{r}
+library(limma)
+# Normalize the expression data in each dataset
+norm_exprs_36059_tcmr <- normalizeQuantiles(exprs(TCMR_NR_dataset_36059))
+norm_exprs_48581_tcmr <- normalizeQuantiles(exprs(TCMR_NR_dataset_48581))
+norm_exprs_129166_tcmr <- normalizeQuantiles(exprs(TCMR_NR_dataset_129166))
+
+# Replace the original expression data with the normalized data
+exprs(TCMR_NR_dataset_36059) <- norm_exprs_36059_tcmr
+exprs(TCMR_NR_dataset_48581) <- norm_exprs_48581_tcmr
+exprs(TCMR_NR_dataset_129166) <- norm_exprs_129166_tcmr
+
+
+# Load the necessary package
+library(sva)
+
+# Extract gene symbols from all datasets
+gene_symbols_gse36059 <- unlist(lapply(strsplit(fData(gse36059)$"Gene Symbol", " /// ", 1), `[`, 1))
+gene_symbols_gse48581 <- unlist(lapply(strsplit(fData(gse48581)$"Gene Symbol", " /// ", 1), `[`, 1))
+gene_symbols_gse129166 <- unlist(lapply(strsplit(fData(gse129166)$"Gene Symbol", " /// ", 1), `[`, 1))
+
+
+# Find common gene symbols
+common_gene_symbols <- Reduce(intersect, list(gene_symbols_gse36059_unique, gene_symbols_gse48581_unique,gene_symbols_gse129166_unique))
+
+# Set the row names for each unique dataset
+rownames(exprs_gse36059_unique) <- gene_symbols_gse36059_unique
+rownames(exprs_gse48581_unique) <- gene_symbols_gse48581_unique
+rownames(exprs_gse129166_unique) <- gene_symbols_gse129166_unique
+
+# Filter expression matrices by common gene symbols and TCMR samples
+exprs_filtered_36059_TCMR <- exprs_gse36059_unique[rownames(exprs_gse36059_unique) %in% common_gene_symbols, colnames(exprs_gse36059_unique) %in% colnames(TCMR_NR_dataset_36059)]
+exprs_filtered_48581_TCMR <- exprs_gse48581_unique[rownames(exprs_gse48581_unique) %in% common_gene_symbols, colnames(exprs_gse48581_unique) %in% colnames(TCMR_NR_dataset_48581)]
+exprs_filtered_129166_TCMR <- exprs_gse129166_unique[rownames(exprs_gse129166_unique) %in% common_gene_symbols, colnames(exprs_gse129166_unique) %in% colnames(TCMR_NR_dataset_129166)]
+
+# Combine the datasets using cbind
+combined_data_TCMR <- cbind(exprs_filtered_36059_TCMR, exprs_filtered_48581_TCMR, exprs_filtered_129166_TCMR)
+
+# Create the batch variable
+batch_TCMR <- c(rep(1, ncol(exprs_filtered_36059_TCMR)), rep(2, ncol(exprs_filtered_48581_TCMR)), rep(3, ncol(exprs_filtered_129166_TCMR)))
+
+# Perform batch correction using ComBat
+corrected_data_TCMR <- ComBat(dat=combined_data_TCMR, batch=batch_TCMR, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+```
+
+
+
+```{r}
+library(limma)
+library(e1071)
+library(caret)
+
+# Define column names and outcomes for each dataset
+gsm_ids_36059_tcmr <- colnames(exprs_filtered_36059_TCMR)
+gsm_ids_48581_tcmr <- colnames(exprs_filtered_48581_TCMR)
+gsm_ids_129166_tcmr <- colnames(exprs_filtered_129166_TCMR)
+
+# Create outcomes data.frames
+outcomes_36059 <- data.frame(GSM_ID = pheno_TCMR_NR_dataset_36059$geo_accession, Outcome = pheno_TCMR_NR_dataset_36059$outcome)
+outcomes_48581 <- data.frame(GSM_ID = pheno_TCMR_NR_dataset_48581$geo_accession, Outcome = pheno_TCMR_NR_dataset_48581$outcome)
+outcomes_129166 <- data.frame(GSM_ID = pheno_TCMR_NR_dataset_129166$geo_accession, Outcome = pheno_TCMR_NR_dataset_129166$outcome)
+
+# Subset the outcomes data.frames based on the filtered expression data column names
+outcomes_36059_filtered_tcmr <- outcomes_36059[outcomes_36059$GSM_ID %in% gsm_ids_36059_tcmr, ]
+outcomes_48581_filtered_tcmr <- outcomes_48581[outcomes_48581$GSM_ID %in% gsm_ids_48581_tcmr, ]
+outcomes_129166_filtered_tcmr <- outcomes_129166[outcomes_129166$GSM_ID %in% gsm_ids_129166_tcmr, ]
+
+# Combine outcomes from all datasets
+combined_outcomes_tcmr <- rbind(outcomes_36059_filtered_tcmr, outcomes_48581_filtered_tcmr, outcomes_129166_filtered_tcmr)
+
+# Extract GSM IDs from corrected_data_TCMR
+gsm_ids_corrected_tcmr <- colnames(corrected_data_TCMR)
+
+# Filter the combined_outcomes data.frame according to the GSM IDs from corrected_data_TCMR
+ordered_outcomes_tcmr <- combined_outcomes_tcmr[match(gsm_ids_corrected_tcmr, combined_outcomes_tcmr$GSM_ID), ]
+
+# Remove samples with NA outcomes
+ordered_outcomes_clean_tcmr <- ordered_outcomes_tcmr[!is.na(ordered_outcomes_tcmr$Outcome), ]
+
+# Update the corrected_data_TCMR object to remove samples with NA outcomes
+corrected_data_clean_tcmr <- corrected_data_TCMR[, colnames(corrected_data_TCMR) %in% ordered_outcomes_clean_tcmr$GSM_ID]
+
+
+
+
+
+# 
+# # Check if there are any missing row names
+# missing_row_names_tcmr <- is.na(rownames(corrected_data_clean_tcmr))
+# 
+# # If there are any missing row names, assign new ones
+# if (any(missing_row_names_tcmr)) {
+#   rownames(corrected_data_clean_tcmr)[missing_row_names_tcmr] <- paste0("Missing_", which(missing_row_names_tcmr))
+# }
+# 
+# # Now create the new data frame and save it to a CSV file
+# new_df_tcmr <- data.frame(RowNames = rownames(corrected_data_clean_tcmr), ColumnData = corrected_data_clean_tcmr[,8])
+# write.csv(new_df_tcmr, file = "corrected_data_clean_tcmr_column8.csv", row.names = FALSE)
+
+
+
+
+
+
+# Create a binary factor for the Outcome variable
+group_tcmr <- factor(ordered_outcomes_clean_tcmr$Outcome)
+
+# Create a design matrix
+design_tcmr <- model.matrix(~0 + group_tcmr)
+
+levels(group_tcmr) <- c("group_tcmrNon_rejection", "group_tcmrTCMR")
+
+# Set column names for the design matrix
+colnames(design_tcmr) <- levels(group_tcmr)
+
+# Fit the linear model
+fit_corrected_tcmr <- lmFit(corrected_data_clean_tcmr, design_tcmr)
+
+
+# Define contrasts
+contrasts_tcmr <- makeContrasts("TCMR - Non_rejection" = group_tcmrTCMR - `group_tcmrNon_rejection`, levels = design_tcmr)
+
+
+
+# Compute the contrasts
+fit2_tcmr <- contrasts.fit(fit_corrected_tcmr, contrasts_tcmr)
+
+# Compute empirical Bayes statistics
+fit2_tcmr <- eBayes(fit2_tcmr)
+
+# Perform the topTable analysis (change the number of top genes if necessary)
+top_genes_tcmr <- topTable(fit2_tcmr, coef = "TCMR - Non_rejection", number = 10000 )
+
+selected_column = c()
+
+ordered_gene_data_tcmr <- corrected_data_clean_tcmr[match(rownames(top_genes), rownames(corrected_data_clean_tcmr)),]
+
+```
+
+
+```{r}
+library(caret)
+library(e1071)
+library(randomForest)
+library(class)
+library(cvTools)
+
+# Select the top 300 genes
+top_30_genes_tcmr <- head(top_genes_tcmr, 30)
+top_300_genes_tcmr <- head(top_genes_tcmr, 300)
+top_1000_genes_tcmr <- head(top_genes_tcmr, 1000)
+top_2000_genes_tcmr <- head(top_genes_tcmr, 2000)
+top_3000_genes_tcmr <- head(top_genes_tcmr, 3000)
+
+# Subset the data based on the top 300 genes
+corrected_data_tcmr_clean_subset <- corrected_data_clean_tcmr[rownames(corrected_data_clean_tcmr) %in% rownames(top_1000_genes_tcmr), ]
+
+# Transpose and create a data frame
+corrected_data_df_tcmr_clean_subset <- as.data.frame(t(corrected_data_tcmr_clean_subset))
+corrected_data_df_tcmr_clean_subset$Outcome <- ordered_outcomes_clean_tcmr$Outcome
+
+# Prepare the data
+X_tcmr <- as.matrix(corrected_data_df_tcmr_clean_subset[, -ncol(corrected_data_df_tcmr_clean_subset)])
+y_tcmr <- as.factor(ordered_outcomes_clean_tcmr$Outcome)
+
+# Cross-validation parameters
+cvK <- 5  # number of CV folds
+n_sim <- 50  # number of repeats
+
+# Initialize the accuracy vectors
+cv_50acc5_svm_tcmr <- c()
+cv_50acc5_knn_tcmr <- c()
+cv_50acc5_rf_tcmr <- c()
+
+for (i in 1:n_sim) {
+  cvSets_tcmr <- cvTools::cvFolds(nrow(X_tcmr), cvK)
+  cv_acc_svm_tcmr <- c()
+  cv_acc_knn_tcmr <- c()
+  cv_acc_rf_tcmr <- c()
+
+  for (j in 1:cvK) {
+    test_id_tcmr <- cvSets_tcmr$subsets[cvSets_tcmr$which == j]
+    X_test_tcmr <- X_tcmr[test_id_tcmr, ]
+    X_train_tcmr <- X_tcmr[-test_id_tcmr, ]
+    y_test_tcmr <- y_tcmr[test_id_tcmr]
+    y_train_tcmr <- y_tcmr[-test_id_tcmr]
+
+    # SVM
+    svm_res_tcmr <- e1071::svm(x = X_train_tcmr, y = as.factor(y_train_tcmr))
+    svm_pred_tcmr <- predict(svm_res_tcmr, X_test_tcmr)
+    cv_acc_svm_tcmr[j] <- mean(svm_pred_tcmr == y_test_tcmr)
+
+    # # k-NN
+    k <- 5
+    knn_pred_tcmr <- knn(train = X_train_tcmr, test = X_test_tcmr, cl = y_train_tcmr, k = k)
+    cv_acc_knn_tcmr[j] <- mean(knn_pred_tcmr == y_test_tcmr)
+
+    # Random Forest
+    ntree <- 500
+    mtry <- sqrt(ncol(X_train_tcmr))
+    rf_res_tcmr <- randomForest(x = X_train_tcmr, y = y_train_tcmr, ntree = ntree, mtry = mtry)
+    rf_pred_tcmr <- predict(rf_res_tcmr, X_test_tcmr)
+    cv_acc_rf_tcmr[j] <- mean(rf_pred_tcmr == y_test_tcmr)
+  }
+
+  cv_50acc5_svm_tcmr <- append(cv_50acc5_svm_tcmr, mean(cv_acc_svm_tcmr))
+  cv_50acc5_knn_tcmr <- append(cv_50acc5_knn_tcmr, mean(cv_acc_knn_tcmr))
+  cv_50acc5_rf_tcmr <- append(cv_50acc5_rf_tcmr, mean(cv_acc_rf_tcmr))
+}
+
+# Calculate the mean accuracy and standard error of the mean
+svm_mean_acc_tcmr <- mean(cv_50acc5_svm_tcmr)
+knn_mean_acc_tcmr <- mean(cv_50acc5_knn_tcmr)
+rf_mean_acc_tcmr <- mean(cv_50acc5_rf_tcmr)
+
+svm_se_tcmr <- sd(cv_50acc5_svm_tcmr) / sqrt(length(cv_50acc5_svm_tcmr))
+knn_se_tcmr <- sd(cv_50acc5_knn_tcmr) / sqrt(length(cv_50acc5_knn_tcmr))
+rf_se_tcmr <- sd(cv_50acc5_rf_tcmr) / sqrt(length(cv_50acc5_rf_tcmr))
+
+# Print the results
+cat("SVM mean accuracy (TCMR): ", svm_mean_acc_tcmr, "\n")
+cat("SVM standard error of the mean (TCMR): ", svm_se_tcmr, "\n")
+
+cat("KNN mean accuracy (TCMR): ", knn_mean_acc_tcmr, "\n")
+cat("KNN standard error of the mean (TCMR): ", knn_se_tcmr, "\n")
+
+cat("RF mean accuracy (TCMR): ", rf_mean_acc_tcmr, "\n")
+cat("RF standard error of the mean (TCMR): ", rf_se_tcmr, "\n")
+
+save(cv_50acc5_svm_tcmr,file = "cv_50acc5_svm_tcmr")
+save(cv_50acc5_knn_tcmr,file = "cv_50acc5_knn_tcmr")
+save(cv_50acc5_rf_tcmr,file = "cv_50acc5_rf_tcmr")
+
+# final_svm_model_tcmr <- e1071::svm(X_tcmr, as.factor(y_tcmr))
+# save(final_svm_model_tcmr, file = "TCMR_SVM_model_1000.RData")
+#
+# final_knn_model_tcmr <- knn.cv(train = X_tcmr, cl = y_tcmr, k = 5)
+# save(final_knn_model_tcmr, file = "TCMR_KNN_model_1000.RData")
+
+final_rf_model_tcmr <- randomForest(x = X_tcmr, y = y_tcmr, ntree = ntree, mtry = mtry)
+# # save(final_rf_model_tcmr_1000, file = "TCMR_RF_model_1000.RData")
+
+```
+
+
+
+
+```{r}
+library(caret)
+library(e1071)
+library(randomForest)
+library(class)
+library(cvTools)
+
+# Select the top 300 genes
+top_1000_genes_tcmr <- head(top_genes_tcmr, 1000)
+
+# Subset the data based on the top 300 genes
+corrected_data_tcmr_clean_subset <- corrected_data_clean_tcmr[rownames(corrected_data_clean_tcmr) %in% rownames(top_1000_genes_tcmr), ]
+
+# Transpose and create a data frame
+corrected_data_df_tcmr_clean_subset <- as.data.frame(t(corrected_data_tcmr_clean_subset))
+corrected_data_df_tcmr_clean_subset$Outcome <- ordered_outcomes_clean_tcmr$Outcome
+
+# Prepare the data
+X_tcmr <- as.matrix(corrected_data_df_tcmr_clean_subset[, -ncol(corrected_data_df_tcmr_clean_subset)])
+y_tcmr <- as.factor(ordered_outcomes_clean_tcmr$Outcome)
+
+# Cross-validation parameters
+cvK <- 5  # number of CV folds
+n_sim <- 50  # number of repeats
+
+# Initialize the prediction vectors
+svm_pred_tcmr_all <- c()
+knn_pred_tcmr_all <- c()
+rf_pred_tcmr_all <- c()
+y_test_tcmr_all <- c()
+
+for (i in 1:n_sim) {
+  cvSets_tcmr <- cvTools::cvFolds(nrow(X_tcmr), cvK)
+
+  for (j in 1:cvK) {
+    test_id_tcmr <- cvSets_tcmr$subsets[cvSets_tcmr$which == j]
+    X_test_tcmr <- X_tcmr[test_id_tcmr, ]
+    X_train_tcmr <- X_tcmr[-test_id_tcmr, ]
+    y_test_tcmr <- y_tcmr[test_id_tcmr]
+    y_train_tcmr <- y_tcmr[-test_id_tcmr]
+
+    # SVM
+    svm_res_tcmr <- e1071::svm(x = X_train_tcmr, y = as.factor(y_train_tcmr))
+    svm_pred_tcmr <- predict(svm_res_tcmr, X_test_tcmr)
+    svm_pred_tcmr_all <- c(svm_pred_tcmr_all, svm_pred_tcmr)
+
+    # k-NN
+    k <- 5
+    knn_pred_tcmr <- knn(train = X_train_tcmr, test = X_test_tcmr, cl = y_train_tcmr, k = k)
+    knn_pred_tcmr_all <- c(knn_pred_tcmr_all, knn_pred_tcmr)
+
+    # Random Forest
+    ntree <- 500
+    mtry <- sqrt(ncol(X_train_tcmr))
+    rf_res_tcmr <- randomForest(x = X_train_tcmr, y = y_train_tcmr, ntree = ntree, mtry = mtry)
+    rf_pred_tcmr <- predict(rf_res_tcmr, X_test_tcmr)
+    rf_pred_tcmr_all <- c(rf_pred_tcmr_all, rf_pred_tcmr)
+
+    # Save the actual test labels
+    y_test_tcmr_all <- c(y_test_tcmr_all, y_test_tcmr)
+  }
+}
+
+# After the cross-validation loop, calculate the confusion matrix
+# Convert numeric predictions back to factor with correct level names
+svm_pred_tcmr_all_factor <- factor(svm_pred_tcmr_all, levels = c(1, 2), labels = c('Nonrej', 'TCMR'))
+knn_pred_tcmr_all_factor <- factor(knn_pred_tcmr_all, levels = c(1, 2), labels = c('Nonrej', 'TCMR'))
+rf_pred_tcmr_all_factor <- factor(rf_pred_tcmr_all, levels = c(1, 2), labels = c('Nonrej', 'TCMR'))
+y_test_tcmr_all_factor <- factor(y_test_tcmr_all, levels = c(1, 2), labels = c('Nonrej', 'TCMR'))
+
+# Compute confusion matrices with 'TCMR' as the positive level
+svm_cm <- confusionMatrix(table(Predicted = svm_pred_tcmr_all_factor, Reference = y_test_tcmr_all_factor), positive = 'TCMR')
+knn_cm <- confusionMatrix(table(Predicted = knn_pred_tcmr_all_factor, Reference = y_test_tcmr_all_factor), positive = 'TCMR')
+rf_cm <- confusionMatrix(table(Predicted = rf_pred_tcmr_all_factor, Reference = y_test_tcmr_all_factor), positive = 'TCMR')
+
+# 
+# save(svm_cm,file = "svm_cm.RData")
+# save(knn_cm,file = "knn_cm.RData")
+# save(rf_cm,file = "rf_cm.RData")
+
+print(svm_cm)
+print(knn_cm)
+print(rf_cm)
+
+```
+
+```{r}
+load("svm_cm.RData")
+load("knn_cm.RData")
+load("rf_cm.RData")
+
+# Extract metrics
+stats_svm <- c(svm_cm$byClass["Sensitivity"], svm_cm$byClass["Specificity"], svm_cm$byClass["Pos Pred Value"], svm_cm$byClass["Neg Pred Value"], svm_cm$overall["Accuracy"])
+stats_knn <- c(knn_cm$byClass["Sensitivity"], knn_cm$byClass["Specificity"], knn_cm$byClass["Pos Pred Value"], knn_cm$byClass["Neg Pred Value"], knn_cm$overall["Accuracy"])
+stats_rf <- c(rf_cm$byClass["Sensitivity"], rf_cm$byClass["Specificity"], rf_cm$byClass["Pos Pred Value"], rf_cm$byClass["Neg Pred Value"], rf_cm$overall["Accuracy"])
+
+# Combine metrics into a data frame
+stats_df_tcmr <- data.frame(
+  RF = stats_rf,
+  SVM = stats_svm,
+  KNN = stats_knn,
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+# Print the table using knitr::kable
+knitr::kable(stats_df_tcmr)
+
+```
+
+
+
+
+
+
+```{r}
+load("cv_50acc5_svm_tcmr.RData")
+load("cv_50acc5_rf_tcmr.RData")
+load("cv_50acc5_knn_tcmr.RData")
+
+# Combine the accuracies into a single data frame
+accuracy_data_tcmr <- data.frame(
+  SVM = cv_50acc5_svm_tcmr,
+  kNN = cv_50acc5_knn_tcmr,
+  RF = cv_50acc5_rf_tcmr
+)
+
+# Create the boxplot
+boxplot(accuracy_data_tcmr, main = "Classifier Accuracies Comparison",
+        xlab = "Classifier", ylab = "Accuracy",
+        col = c("lightblue", "lightgreen", "lightcoral"))
+
+
+```
+```{r}
+# Plot histograms of accuracies
+par(mfrow=c(1,3))  # To plot all three histograms in one row
+hist(cv_50acc5_svm_tcmr, main="SVM", xlab="Accuracy", col="lightblue")
+hist(cv_50acc5_knn_tcmr, main="kNN", xlab="Accuracy", col="lightgreen")
+hist(cv_50acc5_rf_tcmr, main="RF", xlab="Accuracy", col="lightcoral")
+
+library(ggplot2)
+
+# Combine the data into a long format
+accuracy_data_tcmr_long <- reshape2::melt(accuracy_data_tcmr)
+
+# Create the violin plot
+ggplot(accuracy_data_tcmr_long, aes(x=variable, y=value, fill=variable)) +
+  geom_violin() +
+  labs(title="Classifier Accuracies Comparison", x="Classifier", y="Accuracy") +
+  theme_minimal() +
+  scale_fill_manual(values=c("lightblue", "lightgreen", "lightcoral"))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Predict 
+
+
+
+
+```{r}
+# Load the necessary libraries
+library(e1071)
+library(caret)
+# load("TCMR_RF_model_300.RData")
+load("TCMR_RF_model_1000.RData")
+load("TCMR_SVM_model_1000.RData")
+load("TCMR_KNN_model_1000.RData")
+# load("TCMR_RF_model_2000.RData")
+# load("TCMR_RF_model_3000.RData")
+
+
+
+
+# Get the variable names from the loaded model
+var_names <- rownames(varImp(final_rf_model_tcmr))
+
+# Ensure the new data has the same genes as the genes used for model training
+common_genes <- intersect(rownames(exprs_gse25902_unique), var_names)
+new_data_subset <- exprs_gse25902_unique[common_genes, ]
+
+# Make sure the new data is in the same order as the variable names in the model
+new_data_ordered <- new_data_subset[var_names, ]
+
+
+# Transpose the new data
+new_data_t <- t(new_data_ordered)
+
+# Use the final_svm_model to predict class probabilities
+class_probabilities <- predict(final_rf_model_tcmr, new_data_t)
+
+
+# Convert class_probabilities and pheno25902$outcome into factors with the same levels
+class_probabilities_factor <- factor(class_probabilities, levels = c("TCMR", "Non_rejection"))
+pheno25902_outcome_factor <- factor(pheno25902$outcome, levels = c("TCMR", "Non_rejection"))
+
+
+
+library(pROC)
+class_probabilities_cont_tcmr <- predict(final_rf_model_tcmr, new_data_t, type = "prob")
+# plot(pROC::roc(pheno25902_outcome_factor, class_probabilities_cont_tcmr[,1]))
+
+# Load necessary library
+library(ggplot2)
+
+# Calculate the ROC curve
+roc_obj <- pROC::roc(pheno25902_outcome_factor, class_probabilities_cont_tcmr[,1])
+
+# Calculate AUC
+auc_value <- pROC::auc(roc_obj)
+print(paste("AUC: ", auc_value))
+
+# Plot ROC curve with ggroc() and annotate with AUC
+roc_plot <- ggroc(roc_obj)
+
+# Add AUC to the ROC curve plot
+roc_plot + 
+  geom_label(
+    aes(x = .8, y = .2, label = paste("AUC =", round(auc_value, digits = 3))),
+    hjust = 1,
+    vjust = 0
+  )
+
+
+
+
+
+
+
+
+
+
+# Generate the confusion matrix
+confusion_matrix <- confusionMatrix(class_probabilities_factor, pheno25902_outcome_factor)
+print(confusion_matrix)
+
+# Print sensitivity (also known as recall or true positive rate)
+sensitivity <- confusion_matrix$byClass["Sensitivity"]
+cat("Sensitivity:", sensitivity, "\n")
+
+# Print specificity (true negative rate)
+specificity <- confusion_matrix$byClass["Specificity"]
+cat("Specificity:", specificity, "\n")
+
+# Print positive predictive value (precision)
+ppv <- confusion_matrix$byClass["Pos Pred Value"]
+cat("Positive Predictive Value (PPV):", ppv, "\n")
+
+# Print negative predictive value
+npv <- confusion_matrix$byClass["Neg Pred Value"]
+cat("Negative Predictive Value (NPV):", npv, "\n")
+
+# Print accuracy
+accuracy <- confusion_matrix$overall["Accuracy"]
+cat("Accuracy:", accuracy, "\n")
+
+stats_df_tcmr <- data.frame(
+  TCMR = c(sensitivity, specificity, ppv, npv, accuracy),
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+library(knitr)
+knitr::kable(stats_df_tcmr)
+```
+
+
+
+
+```{r}
+library(e1071)
+library(caret)
+library(pROC)
+library(ggplot2)
+library(knitr)
+
+# Load the necessary models
+load("TCMR_RF_model_1000.RData")
+load("TCMR_SVM_model_1000.RData")
+load("TCMR_KNN_model_1000.RData")
+
+# Get the variable names from the loaded RF model
+var_names <- rownames(varImp(final_rf_model_tcmr))
+
+# Ensure the new data has the same genes as the genes used for model training
+common_genes <- intersect(rownames(exprs_gse25902_unique), var_names)
+new_data_subset <- exprs_gse25902_unique[common_genes, ]
+
+# Make sure the new data is in the same order as the variable names in the model
+new_data_ordered <- new_data_subset[var_names, ]
+
+# Transpose the new data
+new_data_t <- t(new_data_ordered)
+
+# Predict class probabilities with RF
+class_probabilities_rf <- predict(final_rf_model_tcmr, new_data_t)
+
+# Convert RF class probabilities and pheno25902$outcome into factors with the same levels
+class_probabilities_rf_factor <- factor(class_probabilities_rf, levels = c("TCMR", "Non_rejection"))
+
+# Predict class probabilities with SVM
+class_probabilities_svm <- predict(final_svm_model_tcmr, new_data_t)
+
+# Convert SVM class probabilities into factors with the same levels
+class_probabilities_svm_factor <- factor(class_probabilities_svm, levels = c("TCMR", "Non_rejection"))
+
+# Predict class probabilities with KNN
+k <- 5
+class_probabilities_knn <- class::knn(train = X_tcmr, test = new_data_t, cl = y_tcmr, k = k)
+
+# Convert KNN class probabilities into factors with the same levels
+class_probabilities_knn_factor <- factor(class_probabilities_knn, levels = c("TCMR", "Non_rejection"))
+
+# pheno25902 outcome factor
+pheno25902_outcome_factor <- factor(pheno25902$outcome, levels = c("TCMR", "Non_rejection"))
+
+# Generate the confusion matrix for RF, SVM, and KNN
+confusion_matrix_rf <- confusionMatrix(class_probabilities_rf_factor, pheno25902_outcome_factor)
+confusion_matrix_svm <- confusionMatrix(class_probabilities_svm_factor, pheno25902_outcome_factor)
+confusion_matrix_knn <- confusionMatrix(class_probabilities_knn_factor, pheno25902_outcome_factor)
+
+# Print confusion matrices
+print(confusion_matrix_rf)
+print(confusion_matrix_svm)
+print(confusion_matrix_knn)
+
+# Function to extract metrics
+extract_metrics <- function(confusion_matrix) {
+  c(
+    "Sensitivity" = confusion_matrix$byClass["Sensitivity"],
+    "Specificity" = confusion_matrix$byClass["Specificity"],
+    "PPV" = confusion_matrix$byClass["Pos Pred Value"],
+    "NPV" = confusion_matrix$byClass["Neg Pred Value"],
+    "Accuracy" = confusion_matrix$overall["Accuracy"]
+  )
+}
+
+# Extract metrics for RF, SVM, and KNN
+stats_rf <- extract_metrics(confusion_matrix_rf)
+stats_svm <- extract_metrics(confusion_matrix_svm)
+stats_knn <- extract_metrics(confusion_matrix_knn)
+
+# Combine metrics into a data frame
+stats_df_tcmr <- data.frame(
+  RF = stats_rf,
+  SVM = stats_svm,
+  KNN = stats_knn,
+  row.names = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy")
+)
+
+knitr::kable(stats_df_tcmr)
+
+```
+
+
+
