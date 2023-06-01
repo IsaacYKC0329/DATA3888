@@ -1,0 +1,39 @@
+---
+title: "GenePath Report"
+output: 
+  pdf_document:
+    keep_tex: yes
+    
+params:
+  abmr: NA
+  tcmr: NA
+  r: NA
+  m: NA
+  g: NA
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+abmr <- params$abmr * 100
+tcmr <- params$tcmr * 100
+text <- params$text
+r <- params$r
+rt <- params$rt
+m <- params$m
+g <- params$g
+```
+
+##### The probability of the kidney is having an `ABMR` is `r abmr`%. 
+##### The probability of the kidney is having an `TCMR` is `r tcmr`%. 
+
+## Result
+`r r`
+
+## Medication Importance
+`r m`
+
+## GenePath function and purpose
+`r g`

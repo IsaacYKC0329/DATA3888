@@ -1,0 +1,14 @@
+name: DATA3888_Kidney_A12
+title: DATA3888_Kidney_A12
+username:
+account: kidneya12
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9154274
+bundleId: 7244238
+url: https://kidneya12.shinyapps.io/DATA3888_Kidney_A12/
+when: 1684671618.77127
+lastSyncTime: 1684671618.77129
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .Rapp.history|3338report.log|3338report.pdf|3338report.Rmd|3338report.tex|abmr_out.csv|ABMR_RF_model_1000.RData|ABMR_SVM_model.RData|Batch correction by unique gene|corrected_data_clean_column2.csv|corrected_data_clean_column3_nonjej.csv|corrected_data_clean_column4_nonjej.csv|corrected_data_clean_column5_nonjej.csv|corrected_data_clean_column6_nonjej.csv|corrected_data_clean_tcmr_column3.csv|corrected_data_clean_tcmr_column4.csv|corrected_data_clean_tcmr_column5.csv|corrected_data_clean_tcmr_column6.csv|corrected_data_clean_tcmr_column7.csv|corrected_data_clean_tcmr_column8.csv|exprs_gse34748_unique.csv|file9ca621be3255.log|file9ca6226736b8.log|file9ca641dbd564.log|file9ca673a4ff29.log|global.r|jss.bst|Kidney_A12.Rmd|Kidney_final|Kidney.Rmd|linked|pinp.bib|pinp.cls|README.md|Shiny.Rmd|TCMR datasets.Rmd|tcmr_out.csv|TCMR_RF_model_2000.RData|TCMR_RF_model_300.RData|TCMR_RF_model_3000.RData|TCMR_SVM_model_1000.RData|TCMR_SVM_model_300.RData|TCMR_SVM_model.RData|Test csv files/.DS_Store|Test csv files/ABMR.csv|Test csv files/Non-Rejection.csv|Test csv files/TCMR.csv|top_genes.RData|未命名.Rmd
